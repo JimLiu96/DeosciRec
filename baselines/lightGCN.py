@@ -383,8 +383,11 @@ class LightGCN(object):
         # NGCF version
         pos_scores = tf.reduce_sum(tf.multiply(users, pos_items), axis=1)
         neg_scores = tf.reduce_sum(tf.multiply(users, neg_items), axis=1)
-
-        regularizer = tf.nn.l2_loss(users) + tf.nn.l2_loss(pos_items) + tf.nn.l2_loss(neg_items)
+        if self.alg_type in ['lightgcn']:
+            regularizer = tf.nn.l2_loss(self.u_g_embeddings_pre) + tf.nn.l2_loss(
+            self.pos_i_g_embeddings_pre) + tf.nn.l2_loss(self.neg_i_g_embeddings_pre)
+        else:
+            regularizer = tf.nn.l2_loss(users) + tf.nn.l2_loss(pos_items) + tf.nn.l2_loss(neg_items)
         regularizer = regularizer/self.batch_size
         
         # In the first version, we implement the bpr loss via the following codes:
@@ -592,7 +595,7 @@ if __name__ == '__main__':
             sys.exit()
 
         # print the validation evaluation metrics each 10 epochs; pos:neg = 1:10.
-        if (epoch + 1) % 10 != 0:
+        if (epoch + 1) % 1 != 0:
             if args.verbose > 0 and epoch % args.verbose == 0:
                 perf_str = 'Epoch %d [%.1fs]: train==[%.5f=%.5f + %.5f]' % (
                     epoch, time() - t1, loss, mf_loss, reg_loss)
@@ -628,7 +631,7 @@ if __name__ == '__main__':
             print(perf_str)
 
         cur_best_pre_0, stopping_step, should_stop = early_stopping(ret['recall'][0], cur_best_pre_0,
-                                                                    stopping_step, expected_order='acc', flag_step=5)
+                                                                    stopping_step, expected_order='acc', flag_step=50)
 
         # *********************************************************
         # early stopping when cur_best_pre_0 is decreasing for ten successive steps.
