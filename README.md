@@ -15,3 +15,6 @@ python DGCF_osci.py --dataset ratings_ml-1m --model_type DGCF_osci --alg_type dg
 ```
 
 This argument is to filter the CHP laplacian matrix, where the value < low is filtered. More details can be find in the paper. 
+
+# Acknowledgement
+We reuse some part of the code in ``Neural Graph Collaborative Filtering`` <https://github.com/xiangwang1223/neural_graph_collaborative_filtering>
