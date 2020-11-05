@@ -1,5 +1,16 @@
 # DeosciRec
 Deoscillated Graph Collaborative Filtering. [Paper in arxiv](https://arxiv.org/abs/2011.02100)
+## Citation
+```
+@misc{liu2020deoscillated,
+      title={Deoscillated Graph Collaborative Filtering}, 
+      author={Zhiwei Liu and Lin Meng and Jiawei Zhang and Philip S. Yu},
+      year={2020},
+      eprint={2011.02100},
+      archivePrefix={arXiv},
+      primaryClass={cs.IR}
+}
+```
 
 This code is based on Tensorflow 1.14 and python 3.6.
 
