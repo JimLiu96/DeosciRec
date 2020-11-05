@@ -1,5 +1,5 @@
 # DeosciRec
-Deoscillated Graph Collaborative Filtering
+``Deoscillated Graph Collaborative Filtering``<https://arxiv.org/abs/2011.02100>
 
 This code is based on Tensorflow 1.14 and python 3.6.
 
