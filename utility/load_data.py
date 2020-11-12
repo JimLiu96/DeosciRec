@@ -26,11 +26,11 @@ class Data(object):
         
         train_file = self.path + '/train.txt'
         valid_file = self.path + '/validation.txt'
-#         test_file = self.path + '/test.txt'
+        test_file = self.path + '/test.txt'
 #         test_file = self.path + '/sparsity_fold_1.txt'
 #         test_file = self.path + '/sparsity_fold_2.txt'
 #         test_file = self.path + '/sparsity_fold_3.txt'
-        test_file = self.path + '/sparsity_fold_4.txt'
+#         test_file = self.path + '/sparsity_fold_4.txt'
         
 
         with open(train_file) as f:
