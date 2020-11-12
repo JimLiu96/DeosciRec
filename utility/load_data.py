@@ -1,3 +1,8 @@
+'''
+Deoscillated Graph Collaborative Filtering, 
+@Author:Zhiwei Liu (jim96liu@gmail.com)
+@Github: https://github.com/JimLiu96/DeosciRec
+'''
 import numpy as np
 import random as rd
 import scipy.sparse as sp
@@ -21,7 +26,12 @@ class Data(object):
         
         train_file = self.path + '/train.txt'
         valid_file = self.path + '/validation.txt'
-        test_file = self.path + '/test.txt'
+#         test_file = self.path + '/test.txt'
+#         test_file = self.path + '/sparsity_fold_1.txt'
+#         test_file = self.path + '/sparsity_fold_2.txt'
+#         test_file = self.path + '/sparsity_fold_3.txt'
+        test_file = self.path + '/sparsity_fold_4.txt'
+        
 
         with open(train_file) as f:
             for l in f.readlines():
@@ -101,26 +111,30 @@ class Data(object):
                         self.test_set[uid] = test_items
                         
 
-    def get_adj_mat(self):
+    def get_adj_mat(self, low=0.00006, high=1.0):
         try:
             t1 = time()
             adj_mat = sp.load_npz(self.path + '/s_adj_mat.npz')
             norm_adj_mat = sp.load_npz(self.path + '/s_laplacian_adj_mat.npz')
             norm_adj_mat_noeye = sp.load_npz(self.path + '/s_laplacian_adj_mat_noeye.npz')
-            filter_cross_adj_mat = sp.load_npz(self.path+ '/s_filter_lap_cross_adj_mat.npz')
+            # filter_cross_adj_mat = sp.load_npz(self.path+ '/s_filter_lap_cross_adj_mat.npz')
+            cross_file_name = self.path + '/s_band_cross_adj_mat' + str(low) + '_' + str(high) + '.npz'
+            band_cross_adj_mat = sp.load_npz(cross_file_name)
             # log_filter_cross_adj_mat = sp.load_npz(self.path+ '/s_log_filter_lap_cross_adj_mat.npz')
             print('already load adj matrix', adj_mat.shape, time() - t1)
         except Exception:
-            adj_mat, norm_adj_mat, norm_adj_mat_noeye, filter_cross_adj_mat = self.create_adj_mat()
+            adj_mat, norm_adj_mat, norm_adj_mat_noeye, band_cross_adj_mat = self.create_adj_mat(low=low, high=high)
             sp.save_npz(self.path + '/s_adj_mat.npz', adj_mat)
             sp.save_npz(self.path + '/s_laplacian_adj_mat.npz', norm_adj_mat)
             sp.save_npz(self.path + '/s_laplacian_adj_mat_noeye.npz', norm_adj_mat_noeye)
-            sp.save_npz(self.path + '/s_filter_lap_cross_adj_mat.npz', filter_cross_adj_mat)
+            # sp.save_npz(self.path + '/s_filter_lap_cross_adj_mat.npz', filter_cross_adj_mat)
+            cross_file_name = self.path + '/s_band_cross_adj_mat' + str(low) + '_' + str(high) + '.npz'
+            sp.save_npz(cross_file_name, band_cross_adj_mat)
             # sp.save_npz(self.path + '/s_log_filter_lap_cross_adj_mat.npz', filter_cross_adj_mat)
             print('already saving the generated adj matices')
-        return adj_mat, norm_adj_mat, norm_adj_mat_noeye, filter_cross_adj_mat
+        return adj_mat, norm_adj_mat, norm_adj_mat_noeye, band_cross_adj_mat
 
-    def create_adj_mat(self):
+    def create_adj_mat(self, low=0.0075, high=0.02):
         t1 = time()
         adj_mat = sp.dok_matrix((self.n_users + self.n_items, self.n_users + self.n_items), dtype=np.float32)
         adj_mat = adj_mat.tolil()
@@ -209,6 +223,39 @@ class Data(object):
             print('generate log-based filtered laplacian-normalized cross-hop adjacency matrix.')
             return norm_adj.tocoo()
 
+        def band_cross_hop_laplacian(adj, low_pass=0.0025, high_stop=1):
+            cross_adj = adj.dot(adj)
+            # cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
+            rowsum = np.array(cross_adj.sum(1))
+            d_inv = np.power(rowsum, -1/2).flatten()
+            d_inv[np.isinf(d_inv)] = 0.
+            d_mat_inv = sp.diags(d_inv)
+            row_norm_adj = d_mat_inv.dot(cross_adj)
+            norm_adj = row_norm_adj.dot(d_mat_inv)
+            norm_adj.data[np.isinf(norm_adj.data)] = 0.
+            norm_adj.data = np.where(norm_adj.data>low_pass, norm_adj.data, 0.)
+            norm_adj.data = np.where(norm_adj.data<high_stop, norm_adj.data, 0.)
+            norm_adj.eliminate_zeros()
+            print('generate filtered laplacian-normalized cross-hop adjacency matrix.')
+            return norm_adj.tocoo()
+
+        def band_cross_hop_laplacian_nodiag(adj, low_pass=0.0025, high_stop=1):
+            cross_adj = adj.dot(adj)
+            # cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
+            rowsum = np.array(cross_adj.sum(1))
+            d_inv = np.power(rowsum, -1/2).flatten()
+            d_inv[np.isinf(d_inv)] = 0.
+            d_mat_inv = sp.diags(d_inv)
+            row_norm_adj = d_mat_inv.dot(cross_adj)
+            norm_adj = row_norm_adj.dot(d_mat_inv)
+            norm_adj.data[np.isinf(norm_adj.data)] = 0.
+            norm_adj.data = np.where(norm_adj.data>low_pass, norm_adj.data, 0.)
+            norm_adj.data = np.where(norm_adj.data<high_stop, norm_adj.data, 0.)
+            norm_adj.setdiag(0.0)
+            norm_adj.eliminate_zeros()
+            print('generate filtered laplacian-normalized cross-hop adjacency matrix.')
+            return norm_adj.tocoo()
+
         def check_adj_if_equal(adj):
             dense_A = np.array(adj.todense())
             degree = np.sum(dense_A, axis=1, keepdims=False)
@@ -221,8 +268,10 @@ class Data(object):
         laplacian_adj_mat_noeye = normalized_adj_laplacian(adj_mat)
         # mean_adj_mat = normalized_adj_single(adj_mat)
         # cross_adj_mat = filter_cross_hop_laplacian(adj_mat + sp.eye(adj_mat.shape[0]))
-        cross_adj_mat = filter_cross_hop_laplacian(adj_mat)
+        # cross_adj_mat = filter_cross_hop_laplacian(adj_mat)
         # cross_adj_mat = log_filter_cross_hop_laplacian(adj_mat)
+        cross_adj_mat = band_cross_hop_laplacian(adj_mat, low_pass=low, high_stop=high)
+        # cross_adj_mat_nodiag = band_cross_hop_laplacian_nodiag(adj_mat, low_pass=low, high_stop=high)
 
         print('already normalize adjacency matrix', time() - t2)
         return adj_mat.tocsr(), laplacian_adj_mat.tocsr(), laplacian_adj_mat_noeye.tocsr(), cross_adj_mat.tocsr()

@@ -1,3 +1,6 @@
+'''
+Deoscillated Graph Collaborative Filtering
+'''
 import argparse
 
 def parse_args():
@@ -22,6 +25,8 @@ def parse_args():
 
     parser.add_argument('--embed_size', type=int, default=64,
                         help='Embedding size.')
+    parser.add_argument('--layer_num', type=int, default=None,
+                        help='The number of layers')
     parser.add_argument('--layer_size', nargs='?', default='[64]',
                         help='Output sizes of every layer')
     parser.add_argument('--batch_size', type=int, default=1024,
@@ -31,12 +36,18 @@ def parse_args():
     parser.add_argument('--test_interval', type=int, default=10,
                         help='The interval epoch number for testing.')
 
+    parser.add_argument('--lareg', type=int, default=0,
+                        help='Regularizations for LA layers')
     parser.add_argument('--regs', nargs='?', default='[1e-5,1e-5,1e-2]',
                         help='Regularizations.')
     parser.add_argument('--local_factor', type=float, default= 0.5,
                         help='local_factor.')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='Learning rate.')
+    parser.add_argument('--low', type=float, default= 0.0001,
+                        help='low pass of the laplacian')
+    parser.add_argument('--high', type=float, default= 1.0,
+                        help='high stop of the laplacian')
 
     parser.add_argument('--model_type', nargs='?', default='ngcf',
                         help='Specify the name of model (ngcf).')

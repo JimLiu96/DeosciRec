@@ -1,3 +1,8 @@
+'''
+Deoscillated Graph Collaborative Filtering, 
+@Author:Zhiwei Liu (jim96liu@gmail.com)
+@Github: https://github.com/JimLiu96/DeosciRec
+'''
 import utility.metrics as metrics
 from utility.parser import parse_args
 from utility.load_data import *
