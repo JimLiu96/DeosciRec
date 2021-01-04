@@ -1,7 +1,8 @@
 '''
-Deoscillated Graph Collaborative Filtering, 
-@Author:Zhiwei Liu (jim96liu@gmail.com)
-@Github: https://github.com/JimLiu96/DeosciRec
+Created on Oct 10, 2018
+Tensorflow Implementation of Neural Graph Collaborative Filtering (NGCF) model in:
+Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
+@author: Xiang Wang (xiangwang@u.nus.edu)
 '''
 import utility.metrics as metrics
 from utility.parser import parse_args
@@ -74,12 +75,36 @@ def get_performance(user_pos_test, r, auc, Ks):
     for K in Ks:
         precision.append(metrics.precision_at_k(r, K))
         recall.append(metrics.recall_at_k(r, K, len(user_pos_test)))
-        ndcg.append(metrics.ndcg_at_k(r, K, len(user_pos_test)))
+        ndcg.append(metrics.ndcg_at_k(len(user_pos_test), r, K))
         hit_ratio.append(metrics.hit_at_k(r, K))
 
     return {'recall': np.array(recall), 'precision': np.array(precision),
             'ndcg': np.array(ndcg), 'hit_ratio': np.array(hit_ratio), 'auc': auc}
 
+
+def valid_one_user(x):
+    # user u's ratings for user u
+    rating = x[0]
+    #uid
+    u = x[1]
+    #user u's items in the training set
+    try:
+        training_items = data_generator.train_items[u]
+    except Exception:
+        training_items = []
+    #user u's items in the test set
+    user_pos_test = data_generator.valid_set[u]
+
+    all_items = set(range(ITEM_NUM))
+
+    test_items = list(all_items - set(training_items))
+
+    if args.test_flag == 'part':
+        r, auc = ranklist_by_heapq(user_pos_test, test_items, rating, Ks)
+    else:
+        r, auc = ranklist_by_sorted(user_pos_test, test_items, rating, Ks)
+
+    return get_performance(user_pos_test, r, auc, Ks)
 
 def test_one_user(x):
     # user u's ratings for user u
@@ -93,6 +118,7 @@ def test_one_user(x):
         training_items = []
     #user u's items in the test set
     user_pos_test = data_generator.test_set[u]
+    
 
     all_items = set(range(ITEM_NUM))
 
@@ -105,32 +131,8 @@ def test_one_user(x):
 
     return get_performance(user_pos_test, r, auc, Ks)
 
-def valid_one_user(x):
-    # user u's ratings for user u
-    rating = x[0]
-    #uid
-    u = x[1]
-    #user u's items in the training set
-    try:
-        training_items = data_generator.train_items[u]
-    except Exception:
-        training_items = []
-    #user u's items in the test set
-    user_pos_valid = data_generator.valid_set[u]
 
-    all_items = set(range(ITEM_NUM))
-
-    valid_items = list(all_items - set(training_items))
-
-    if args.test_flag == 'part':
-        r, auc = ranklist_by_heapq(user_pos_valid, valid_items, rating, Ks)
-    else:
-        r, auc = ranklist_by_sorted(user_pos_valid, valid_items, rating, Ks)
-
-    return get_performance(user_pos_valid, r, auc, Ks)
-
-
-def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
+def test(sess, model, users_to_test, is_valid=False, drop_flag=False, batch_test_flag=False):
     result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
               'hit_ratio': np.zeros(len(Ks)), 'auc': 0.}
 
@@ -150,7 +152,7 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
         end = (u_batch_id + 1) * u_batch_size
 
         user_batch = test_users[start: end]
-
+        # print('one batch')
         if batch_test_flag:
 
             n_item_batchs = ITEM_NUM // i_batch_size + 1
@@ -171,6 +173,7 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
                                                                 model.pos_items: item_batch,
                                                                 model.node_dropout: [0.]*len(eval(args.layer_size)),
                                                                 model.mess_dropout: [0.]*len(eval(args.layer_size))})
+                # print(i_rate_batch.shape)
                 rate_batch[:, i_start: i_end] = i_rate_batch
                 i_count += i_rate_batch.shape[1]
 
@@ -189,7 +192,10 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
                                                               model.mess_dropout: [0.] * len(eval(args.layer_size))})
 
         user_batch_rating_uid = zip(rate_batch, user_batch)
-        batch_result = pool.map(test_one_user, user_batch_rating_uid)
+        if is_valid == True:
+            batch_result = pool.map(valid_one_user, user_batch_rating_uid)
+        else:
+            batch_result = pool.map(test_one_user, user_batch_rating_uid)
         count += len(batch_result)
 
         for re in batch_result:
@@ -201,79 +207,5 @@ def test(sess, model, users_to_test, drop_flag=False, batch_test_flag=False):
 
 
     assert count == n_test_users
-    pool.close()
-    return result
-
-def validate(sess, model, users_to_valid, drop_flag=False, batch_test_flag=False):
-    result = {'precision': np.zeros(len(Ks)), 'recall': np.zeros(len(Ks)), 'ndcg': np.zeros(len(Ks)),
-              'hit_ratio': np.zeros(len(Ks)), 'auc': 0.}
-
-    pool = multiprocessing.Pool(cores)
-
-    u_batch_size = BATCH_SIZE * 2
-    i_batch_size = BATCH_SIZE
-
-    valid_users = users_to_valid
-    n_valid_users = len(valid_users)
-    n_user_batchs = n_valid_users // u_batch_size + 1
-
-    count = 0
-
-    for u_batch_id in range(n_user_batchs):
-        start = u_batch_id * u_batch_size
-        end = (u_batch_id + 1) * u_batch_size
-
-        user_batch = valid_users[start: end]
-
-        if batch_test_flag:
-
-            n_item_batchs = ITEM_NUM // i_batch_size + 1
-            rate_batch = np.zeros(shape=(len(user_batch), ITEM_NUM))
-
-            i_count = 0
-            for i_batch_id in range(n_item_batchs):
-                i_start = i_batch_id * i_batch_size
-                i_end = min((i_batch_id + 1) * i_batch_size, ITEM_NUM)
-
-                item_batch = range(i_start, i_end)
-
-                if drop_flag == False:
-                    i_rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
-                                                                model.pos_items: item_batch})
-                else:
-                    i_rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
-                                                                model.pos_items: item_batch,
-                                                                model.node_dropout: [0.]*len(eval(args.layer_size)),
-                                                                model.mess_dropout: [0.]*len(eval(args.layer_size))})
-                rate_batch[:, i_start: i_end] = i_rate_batch
-                i_count += i_rate_batch.shape[1]
-
-            assert i_count == ITEM_NUM
-
-        else:
-            item_batch = range(ITEM_NUM)
-
-            if drop_flag == False:
-                rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
-                                                              model.pos_items: item_batch})
-            else:
-                rate_batch = sess.run(model.batch_ratings, {model.users: user_batch,
-                                                              model.pos_items: item_batch,
-                                                              model.node_dropout: [0.] * len(eval(args.layer_size)),
-                                                              model.mess_dropout: [0.] * len(eval(args.layer_size))})
-
-        user_batch_rating_uid = zip(rate_batch, user_batch)
-        batch_result = pool.map(valid_one_user, user_batch_rating_uid)
-        count += len(batch_result)
-
-        for re in batch_result:
-            result['precision'] += re['precision']/n_valid_users
-            result['recall'] += re['recall']/n_valid_users
-            result['ndcg'] += re['ndcg']/n_valid_users
-            result['hit_ratio'] += re['hit_ratio']/n_valid_users
-            result['auc'] += re['auc']/n_valid_users
-
-
-    assert count == n_valid_users
     pool.close()
     return result

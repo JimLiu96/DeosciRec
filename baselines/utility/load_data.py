@@ -1,7 +1,9 @@
 '''
-Deoscillated Graph Collaborative Filtering, 
-@Author:Zhiwei Liu (jim96liu@gmail.com)
-@Github: https://github.com/JimLiu96/DeosciRec
+Created on Oct 10, 2018
+Tensorflow Implementation of Neural Graph Collaborative Filtering (NGCF) model in:
+Wang Xiang et al. Neural Graph Collaborative Filtering. In SIGIR 2019.
+python NGCF.py --regs [1e-5] --embed_size 64 --layer_size [64,64,64] --lr 0.0001 --save_flag 1 --pretrain 0 --batch_size 1024 --epoch 400 --verbose 1 --node_dropout [0.1] --mess_dropout [0.1,0.1,0.1] --dataset amazon-book --alg_type gcn
+@author: Xiang Wang (xiangwang@u.nus.edu)
 '''
 import numpy as np
 import random as rd
@@ -23,15 +25,19 @@ class Data(object):
         self.neg_pools = {}
         self.val_ratio = 0
         self.exist_users = []
+        self.load_org()
         
+    def load_org(self):
         train_file = self.path + '/train.txt'
         valid_file = self.path + '/validation.txt'
         test_file = self.path + '/test.txt'
-#         test_file = self.path + '/sparsity_fold_1.txt'
-#         test_file = self.path + '/sparsity_fold_2.txt'
-#         test_file = self.path + '/sparsity_fold_3.txt'
-#         test_file = self.path + '/sparsity_fold_4.txt'
-        
+
+        # get number of users and items
+        self.n_users, self.n_items = 0, 0
+        self.n_train, self.n_valid, self.n_test = 0, 0, 0
+        self.neg_pools = {}
+
+        self.exist_users = []
 
         with open(train_file) as f:
             for l in f.readlines():
@@ -110,172 +116,113 @@ class Data(object):
                         uid, test_items = items[0], items[1:]
                         self.test_set[uid] = test_items
                         
+    def map_data(self, data):
+        """
+        Map data to proper indices in case they are not in a continues [0, N) range
 
-    def get_adj_mat(self, low=0.00006, high=1.0):
+        Parameters
+        ----------
+        data : np.int32 arrays
+
+        Returns
+        -------
+        mapped_data : np.int32 arrays
+        n : length of mapped_data
+
+        """
+        uniq = list(set(data))
+
+        id_dict = {old: new for new, old in enumerate(sorted(uniq))}
+        data = np.array(list(map(lambda x: id_dict[x], data)))
+        n = len(uniq)
+
+        return data, id_dict, n
+
+    def get_adj_mat(self):
         try:
             t1 = time()
             adj_mat = sp.load_npz(self.path + '/s_adj_mat.npz')
-            norm_adj_mat = sp.load_npz(self.path + '/s_laplacian_adj_mat.npz')
-            norm_adj_mat_noeye = sp.load_npz(self.path + '/s_laplacian_adj_mat_noeye.npz')
-            # filter_cross_adj_mat = sp.load_npz(self.path+ '/s_filter_lap_cross_adj_mat.npz')
-            cross_file_name = self.path + '/s_band_cross_adj_mat' + str(low) + '_' + str(high) + '.npz'
-            band_cross_adj_mat = sp.load_npz(cross_file_name)
-            # log_filter_cross_adj_mat = sp.load_npz(self.path+ '/s_log_filter_lap_cross_adj_mat.npz')
+            norm_adj_mat = sp.load_npz(self.path + '/s_norm_adj_mat.npz')
+            mean_adj_mat = sp.load_npz(self.path + '/s_mean_adj_mat.npz')
+            gcn_adj_mat = sp.load_npz(self.path + '/s_gcn_adj_mat.npz')
             print('already load adj matrix', adj_mat.shape, time() - t1)
-        except Exception:
-            adj_mat, norm_adj_mat, norm_adj_mat_noeye, band_cross_adj_mat = self.create_adj_mat(low=low, high=high)
-            sp.save_npz(self.path + '/s_adj_mat.npz', adj_mat)
-            sp.save_npz(self.path + '/s_laplacian_adj_mat.npz', norm_adj_mat)
-            sp.save_npz(self.path + '/s_laplacian_adj_mat_noeye.npz', norm_adj_mat_noeye)
-            # sp.save_npz(self.path + '/s_filter_lap_cross_adj_mat.npz', filter_cross_adj_mat)
-            cross_file_name = self.path + '/s_band_cross_adj_mat' + str(low) + '_' + str(high) + '.npz'
-            sp.save_npz(cross_file_name, band_cross_adj_mat)
-            # sp.save_npz(self.path + '/s_log_filter_lap_cross_adj_mat.npz', filter_cross_adj_mat)
-            print('already saving the generated adj matices')
-        return adj_mat, norm_adj_mat, norm_adj_mat_noeye, band_cross_adj_mat
 
-    def create_adj_mat(self, low=0.0075, high=0.02):
+        except Exception:
+            adj_mat, norm_adj_mat, mean_adj_mat, gcn_adj_mat = self.create_adj_mat()
+            sp.save_npz(self.path + '/s_adj_mat.npz', adj_mat)
+            sp.save_npz(self.path + '/s_norm_adj_mat.npz', norm_adj_mat)
+            sp.save_npz(self.path + '/s_mean_adj_mat.npz', mean_adj_mat)
+            sp.save_npz(self.path + '/s_gcn_adj_mat.npz', gcn_adj_mat)
+
+        try:
+            pre_adj_mat = sp.load_npz(self.path + '/s_pre_adj_mat.npz')
+        except Exception:
+            adj_mat = adj_mat
+            rowsum = np.array(adj_mat.sum(1))
+            d_inv = np.power(rowsum, -0.5).flatten()
+
+            d_inv[np.isinf(d_inv)] = 0.
+            d_mat_inv = sp.diags(d_inv)
+            norm_adj = d_mat_inv.dot(adj_mat)
+            norm_adj = norm_adj.dot(d_mat_inv)
+            print('generate pre adjacency matrix.')
+            pre_adj_mat = norm_adj.tocsr()
+            sp.save_npz(self.path + '/s_pre_adj_mat.npz', norm_adj)
+
+        return adj_mat, norm_adj_mat, mean_adj_mat, gcn_adj_mat, pre_adj_mat
+
+    def create_adj_mat(self):
         t1 = time()
         adj_mat = sp.dok_matrix((self.n_users + self.n_items, self.n_users + self.n_items), dtype=np.float32)
         adj_mat = adj_mat.tolil()
         R = self.R.tolil()
-
-        adj_mat[:self.n_users, self.n_users:] = R
-        adj_mat[self.n_users:, :self.n_users] = R.T
+        # prevent memory from overflowing
+        for i in range(5):
+            adj_mat[int(self.n_users * i / 5.0):int(self.n_users * (i + 1.0) / 5), self.n_users:] = \
+                R[int(self.n_users * i / 5.0):int(self.n_users * (i + 1.0) / 5)]
+            adj_mat[self.n_users:, int(self.n_users * i / 5.0):int(self.n_users * (i + 1.0) / 5)] = \
+                R[int(self.n_users * i / 5.0):int(self.n_users * (i + 1.0) / 5)].T
         adj_mat = adj_mat.todok()
         print('already create adjacency matrix', adj_mat.shape, time() - t1)
 
         t2 = time()
-
+        # row normalize
         def normalized_adj_single(adj):
             rowsum = np.array(adj.sum(1))
 
             d_inv = np.power(rowsum, -1).flatten()
             d_inv[np.isinf(d_inv)] = 0.
             d_mat_inv = sp.diags(d_inv)
-
             norm_adj = d_mat_inv.dot(adj)
-            # norm_adj = adj.dot(d_mat_inv)
             print('generate single-normalized adjacency matrix.')
             return norm_adj.tocoo()
 
-        def normalized_adj_laplacian(adj):
+        # laplacian normalize
+        def normalized_adj_mx(adj):
             rowsum = np.array(adj.sum(1))
+
             d_inv = np.power(rowsum, -0.5).flatten()
             d_inv[np.isinf(d_inv)] = 0.
             d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-
-            print('generate laplacian-normalized adjacency matrix.')
-            return norm_adj.tocoo()
-
-        def normalize_cross_hop_laplacian(adj):
-            cross_adj = adj.dot(adj)
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            norm_adj.eliminate_zeros()
-            print('generate laplacian-normalized cross-hop adjacency matrix.')
-            return norm_adj.tocoo()
-
-        def laplacian_both_hop_adj(adj):
-            cross_adj = adj.dot(adj)
-            cross_adj = adj + cross_adj + sp.eye(adj_mat.shape[0])
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            print('generate laplacian-normalized both 1,2-order cross-hop adjacency matrix.')
-            return norm_adj.tocoo()
-        
-        def filter_cross_hop_laplacian(adj, filter_numer=2):
-            cross_adj = adj.dot(adj)
-            cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            norm_adj.data[np.isinf(norm_adj.data)] = 0.
-            norm_adj.eliminate_zeros()
-            print('generate filtered laplacian-normalized cross-hop adjacency matrix.')
-            return norm_adj.tocoo()
-
-        def log_filter_cross_hop_laplacian(adj, filter_numer=0):
-            cross_adj = adj.dot(adj)
-            cross_adj.data = np.log(cross_adj.data)
-            cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            norm_adj.data[np.isinf(norm_adj.data)] = 0.
-            norm_adj.eliminate_zeros()
-            print('generate log-based filtered laplacian-normalized cross-hop adjacency matrix.')
-            return norm_adj.tocoo()
-
-        def band_cross_hop_laplacian(adj, low_pass=0.0025, high_stop=1):
-            cross_adj = adj.dot(adj)
-            # cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            norm_adj.data[np.isinf(norm_adj.data)] = 0.
-            norm_adj.data = np.where(norm_adj.data>low_pass, norm_adj.data, 0.)
-            norm_adj.data = np.where(norm_adj.data<high_stop, norm_adj.data, 0.)
-            norm_adj.eliminate_zeros()
-            print('generate filtered laplacian-normalized cross-hop adjacency matrix.')
-            return norm_adj.tocoo()
-
-        def band_cross_hop_laplacian_nodiag(adj, low_pass=0.0025, high_stop=1):
-            cross_adj = adj.dot(adj)
-            # cross_adj.data = np.where(cross_adj.data>filter_numer, cross_adj.data, 0.)
-            rowsum = np.array(cross_adj.sum(1))
-            d_inv = np.power(rowsum, -1/2).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat_inv = sp.diags(d_inv)
-            row_norm_adj = d_mat_inv.dot(cross_adj)
-            norm_adj = row_norm_adj.dot(d_mat_inv)
-            norm_adj.data[np.isinf(norm_adj.data)] = 0.
-            norm_adj.data = np.where(norm_adj.data>low_pass, norm_adj.data, 0.)
-            norm_adj.data = np.where(norm_adj.data<high_stop, norm_adj.data, 0.)
-            norm_adj.setdiag(0.0)
-            norm_adj.eliminate_zeros()
-            print('generate filtered laplacian-normalized cross-hop adjacency matrix.')
+            norm_adj = d_mat_inv.dot(adj_mat)
+            norm_adj = norm_adj.dot(d_mat_inv)
+            print('generate single-normalized adjacency matrix.')
             return norm_adj.tocoo()
 
         def check_adj_if_equal(adj):
             dense_A = np.array(adj.todense())
             degree = np.sum(dense_A, axis=1, keepdims=False)
+
             temp = np.dot(np.diag(np.power(degree, -1)), dense_A)
             print('check normalized adjacency matrix whether equal to this laplacian matrix.')
             return temp
 
-        # norm_adj_mat = normalized_adj_single(adj_mat + sp.eye(adj_mat.shape[0]))
-        laplacian_adj_mat = normalized_adj_laplacian(adj_mat + sp.eye(adj_mat.shape[0]))
-        laplacian_adj_mat_noeye = normalized_adj_laplacian(adj_mat)
-        # mean_adj_mat = normalized_adj_single(adj_mat)
-        # cross_adj_mat = filter_cross_hop_laplacian(adj_mat + sp.eye(adj_mat.shape[0]))
-        # cross_adj_mat = filter_cross_hop_laplacian(adj_mat)
-        # cross_adj_mat = log_filter_cross_hop_laplacian(adj_mat)
-        cross_adj_mat = band_cross_hop_laplacian(adj_mat, low_pass=low, high_stop=high)
-        # cross_adj_mat_nodiag = band_cross_hop_laplacian_nodiag(adj_mat, low_pass=low, high_stop=high)
+        norm_adj_mat = normalized_adj_single(adj_mat + sp.eye(adj_mat.shape[0]))
+        mean_adj_mat = normalized_adj_single(adj_mat)
+        gcn_adj_mat = normalized_adj_mx(adj_mat + sp.eye(adj_mat.shape[0]))
 
         print('already normalize adjacency matrix', time() - t2)
-        return adj_mat.tocsr(), laplacian_adj_mat.tocsr(), laplacian_adj_mat_noeye.tocsr(), cross_adj_mat.tocsr()
-
+        return adj_mat.tocsr(), norm_adj_mat.tocsr(), mean_adj_mat.tocsr(), gcn_adj_mat.tocsr()
 
     def negative_pool(self):
         t1 = time()
